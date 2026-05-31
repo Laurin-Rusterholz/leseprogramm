@@ -58,10 +58,22 @@ export function Library({
       ) : (
         <div className="library">
           {books.map((b) => (
-            <button key={b.id} className="book-card" onClick={() => onOpen(b.id)}>
-              <span
+            <div
+              key={b.id}
+              className="book-card"
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(b.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpen(b.id);
+                }
+              }}
+            >
+              <button
+                type="button"
                 className="del"
-                role="button"
                 aria-label="Buch löschen"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -69,7 +81,7 @@ export function Library({
                 }}
               >
                 <IconTrash />
-              </span>
+              </button>
               <div className="book-cover" style={{ filter: `hue-rotate(${hueFor(b.id)}deg)` }}>
                 <span className="spine" />
                 <span className="cover-title">{b.title}</span>
@@ -91,7 +103,7 @@ export function Library({
                   )}
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}

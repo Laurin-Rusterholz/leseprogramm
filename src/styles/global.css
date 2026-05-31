@@ -456,28 +456,41 @@ h3 {
   position: absolute;
   top: 10px;
   right: 10px;
-  width: 34px;
-  height: 34px;
+  z-index: 3;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
   border: none;
-  background: rgba(20, 12, 6, 0.42);
+  background: rgba(20, 12, 6, 0.5);
   color: #fff;
   display: grid;
   place-items: center;
+  cursor: pointer;
   opacity: 0;
-  transition: opacity 0.2s, background 0.2s;
+  transition: opacity 0.2s, background 0.2s, transform 0.15s var(--ease);
   backdrop-filter: blur(4px);
+  -webkit-tap-highlight-color: transparent;
 }
 .book-card:hover .del,
 .book-card:focus-within .del {
   opacity: 1;
 }
+/* Touch-Geräte (iPad) haben kein Hover -> Knopf immer sichtbar */
+@media (hover: none) {
+  .book-card .del {
+    opacity: 1;
+  }
+}
 .book-card .del:hover {
   background: var(--accent);
 }
+.book-card .del:active {
+  transform: scale(0.9);
+  background: var(--accent);
+}
 .book-card .del svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
 }
 
 .empty {
