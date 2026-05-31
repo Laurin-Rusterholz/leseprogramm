@@ -12,8 +12,10 @@ import {
   IconClose,
   IconSparkles,
   IconCheck,
+  IconDownload,
 } from './Icons';
 import { countWords } from '../lib/tokenize';
+import { bookToMarkdown, downloadTextFile, safeFilename } from '../lib/export';
 
 type Speech = ReturnType<typeof useSpeech>;
 
@@ -143,7 +145,7 @@ export function Reader({
                 <IconClose />
               </button>
             </header>
-            <div style={{ padding: '0 14px 12px' }}>
+            <div style={{ padding: '0 14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button
                 className="btn small"
                 style={{ width: '100%' }}
@@ -153,6 +155,14 @@ export function Reader({
               >
                 {regliederBusy ? <span className="spinner" /> : <IconSparkles width={16} height={16} />}
                 {regliederBusy ? 'KI gliedert…' : 'Kapitel neu mit KI gliedern'}
+              </button>
+              <button
+                className="btn small"
+                style={{ width: '100%' }}
+                onClick={() => downloadTextFile(`${safeFilename(book.title)}.md`, bookToMarkdown(book))}
+                title="Das ganze Buch als Textdatei herunterladen (zum Nachprüfen)"
+              >
+                <IconDownload width={16} height={16} /> Ganzes Buch exportieren (.md)
               </button>
             </div>
             <div className="chapters">

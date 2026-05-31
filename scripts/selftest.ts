@@ -9,6 +9,7 @@ import {
   detectTocEnd,
 } from '../src/lib/chapters';
 import { reconstructPageText, cleanupText, looksLikeHeading } from '../src/lib/pdfText';
+import { bookToMarkdown } from '../src/lib/export';
 
 let passed = 0;
 let failed = 0;
@@ -160,6 +161,25 @@ const wrapped = cleanupText(
   'Dies ist ein recht langer Satz der über mehrere\nZeilen umgebrochen wurde und zusammengehört.',
 );
 check('unwrap', !wrapped.includes('\n') && wrapped.includes('mehrere Zeilen'), JSON.stringify(wrapped));
+
+// ----- Export -----
+const md = bookToMarkdown({
+  id: 'x',
+  title: 'Mein Buch',
+  author: 'Autorin',
+  text: 'egal',
+  chapters: [
+    { id: 'a', title: 'Einführung', start: 0, end: 1, text: 'Der erste Absatz des Buches.' },
+    { id: 'b', title: 'Das Hindernis', start: 1, end: 2, text: 'Hier steht der zweite Kapiteltext.' },
+  ],
+  pageCount: 10,
+  wordCount: 1234,
+  createdAt: 0,
+  chapterSource: 'ki',
+});
+check('export titel', md.includes('# Mein Buch'));
+check('export kapitelueberschriften', md.includes('## 1. Einführung') && md.includes('## 2. Das Hindernis'));
+check('export inhalt', md.includes('zweite Kapiteltext') && md.includes('erste Absatz'));
 
 function buildMap(t: string): number[] {
   // grobe Rückabbildung für den Test (gleiche Logik wie in chapters.ts)

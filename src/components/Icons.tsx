@@ -145,6 +145,12 @@ export const IconPlus = (p: P) => (
     <path d="M12 5v14M5 12h14" />
   </svg>
 );
+export const IconDownload = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 4v12M7 11l5 5 5-5" />
+    <path d="M5 20h14" />
+  </svg>
+);
 export const IconText = (p: P) => (
   <svg {...base(p)}>
     <path d="M4 7V5h16v2M9 5v14M7 19h4" />
