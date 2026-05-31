@@ -1,0 +1,27 @@
+{
+  "name": "leseprogramm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Bücher aus PDFs lesen – klassisch oder im Fokus-Modus (RSVP), mit Kapitel-Einteilung durch Google Gemini und Vorlese-Funktion.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/selftest.ts"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.8.69",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11"
+  }
+}

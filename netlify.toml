@@ -1,0 +1,28 @@
+# Netlify-Konfiguration für das Leseprogramm
+# Reine Client-App: Build mit Vite, Auslieferung aus dem dist-Ordner.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA-Fallback: alle Routen auf index.html (Single-Page-App)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Sinnvolle Sicherheits- und Caching-Header
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
