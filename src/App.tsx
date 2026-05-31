@@ -12,7 +12,7 @@ import {
   storageMode,
   type StorageMode,
 } from './lib/storage';
-import { extractPdf } from './lib/pdf';
+import { extractPdf, ocrPdf } from './lib/pdf';
 import { detectChapters } from './lib/gemini';
 import { chaptersFromAiMarkers, heuristicChapters, makeId } from './lib/chapters';
 import { countWords } from './lib/tokenize';
@@ -81,7 +81,7 @@ export default function App() {
           progress: 0,
         });
 
-        const { text, pageCount, title, author } = await extractPdf(file, (p) => {
+        const extracted = await extractPdf(file, (p) => {
           setImporting((s) => ({
             ...s,
             stage: 'Text wird extrahiert …',
@@ -89,17 +89,49 @@ export default function App() {
             progress: p.total ? p.page / p.total : null,
           }));
         });
+        const { pageCount, title, author } = extracted;
+        let text = extracted.text;
+        const bookTitle = (title && title.length > 1 ? title : file.name.replace(/\.pdf$/i, '')).trim();
+
+        // Wenig Text trotz mehrerer Seiten -> vermutlich gescannt: OCR per KI anbieten
+        const lowYield = text.trim().length < Math.max(80, pageCount * 40);
+        if (lowYield && settings.apiKey.trim()) {
+          const ok = window.confirm(
+            `In „${bookTitle}“ wurde kaum Text gefunden ` +
+              `(${text.trim().length} Zeichen auf ${pageCount} Seite${pageCount === 1 ? '' : 'n'}). ` +
+              `Wahrscheinlich ist das PDF gescannt.\n\n` +
+              `Soll die KI den Text aus den Seitenbildern auslesen (OCR)? ` +
+              `Dabei werden ${pageCount} Seiten einzeln an Google Gemini gesendet – ` +
+              `das kann dauern und Anfrage-Limits/Kosten verursachen.`,
+          );
+          if (ok) {
+            try {
+              const ocr = await ocrPdf(file, settings.apiKey.trim(), settings.model, (p) =>
+                setImporting((s) => ({
+                  ...s,
+                  stage: 'KI liest die Seiten (OCR) …',
+                  detail: `Seite ${p.page} von ${p.total}`,
+                  progress: p.total ? p.page / p.total : null,
+                  ai: true,
+                })),
+              );
+              if (ocr.text.trim().length > text.trim().length) text = ocr.text;
+            } catch (e) {
+              notify('OCR fehlgeschlagen: ' + (e instanceof Error ? e.message : 'Fehler'), 'error');
+            }
+          }
+        }
 
         if (!text || text.trim().length < 20) {
           notify(
-            'Aus diesem PDF ließ sich kaum Text gewinnen. Vermutlich ein gescanntes Bild-PDF ohne Textebene.',
+            settings.apiKey.trim()
+              ? 'Aus diesem PDF ließ sich kein Text gewinnen.'
+              : 'Aus diesem PDF ließ sich kaum Text gewinnen – vermutlich gescannt. Hinterlege einen Gemini-Schlüssel, dann kann die KI die Seiten per OCR auslesen.',
             'error',
           );
           setImporting(IDLE_IMPORT);
           return;
         }
-
-        const bookTitle = (title && title.length > 1 ? title : file.name.replace(/\.pdf$/i, '')).trim();
         const id = makeId();
         let chapters;
         let chapterSource: Book['chapterSource'] = 'heuristik';

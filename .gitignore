@@ -3,6 +3,7 @@ dist
 dist-ssr
 *.local
 *.tsbuildinfo
+public/pdfjs
 .DS_Store
 .env
 .env.*

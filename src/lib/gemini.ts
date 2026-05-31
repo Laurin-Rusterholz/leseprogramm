@@ -108,6 +108,57 @@ export async function generateText(
   return parts.map((p: { text?: string }) => p.text || '').join('');
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Liest den Text einer Seite per Gemini-Vision aus einem (JPEG-)Bild aus.
+ * Dient als OCR-Fallback für gescannte PDFs ohne Textebene.
+ */
+export async function ocrImage(
+  apiKey: string,
+  model: string,
+  base64Image: string,
+  mimeType = 'image/jpeg',
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!apiKey) throw new GeminiError('Kein API-Schlüssel hinterlegt.');
+  const prompt =
+    'Dies ist das Bild einer Buchseite. Gib ausschließlich den fortlaufenden ' +
+    'Lesetext der Seite exakt wieder – ohne Kopf-/Fußzeilen, Seitenzahlen oder ' +
+    'Kommentare. Behalte Absätze bei und trenne sie durch eine Leerzeile. ' +
+    'Steht eine Kapitelüberschrift auf der Seite, gib sie als eigene Zeile aus. ' +
+    'Ist die Seite leer oder enthält keinen Text, antworte mit nichts.';
+  const body = {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }, { inline_data: { mime_type: mimeType, data: base64Image } }],
+      },
+    ],
+    generationConfig: { temperature: 0 },
+  };
+
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(
+      `${BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
+    if (res.status === 429 && attempt < 4) {
+      await sleep(1500 * (attempt + 1));
+      continue;
+    }
+    if (!res.ok) throw friendlyError(res.status, await res.text());
+    const data = await res.json();
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    return parts.map((p: { text?: string }) => p.text || '').join('');
+  }
+}
+
 const CHAPTER_SCHEMA = {
   type: 'ARRAY',
   items: {

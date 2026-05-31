@@ -5,7 +5,10 @@
   "type": "module",
   "description": "Bücher aus PDFs lesen – klassisch oder im Fokus-Modus (RSVP), mit Kapitel-Einteilung durch Google Gemini und Vorlese-Funktion.",
   "scripts": {
+    "copy-pdf-assets": "node scripts/copy-pdf-assets.mjs",
+    "predev": "node scripts/copy-pdf-assets.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-pdf-assets.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
