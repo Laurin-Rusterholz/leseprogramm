@@ -91,9 +91,32 @@ async function readMeta(pdf: pdfjsLib.PDFDocumentProxy): Promise<{ title?: strin
   }
 }
 
+async function renderPageToJpeg(page: pdfjsLib.PDFPageProxy): Promise<string> {
+  const base = page.getViewport({ scale: 1 });
+  // Auf ~1600px Breite skalieren – gut lesbar, aber nicht zu groß.
+  const scale = Math.min(2.5, Math.max(1.2, 1600 / base.width));
+  const viewport = page.getViewport({ scale });
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+  const ctx = canvas.getContext('2d');
+  let base64 = '';
+  if (ctx) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    base64 = (canvas.toDataURL('image/jpeg', 0.72).split(',')[1] as string) || '';
+  }
+  canvas.width = 0;
+  canvas.height = 0;
+  return base64;
+}
+
 /**
- * OCR-Fallback für gescannte PDFs: rendert jede Seite als Bild und lässt sie
- * von Gemini transkribieren. Sendet die Seiten einzeln an die KI.
+ * KI-Extraktion: rendert jede PDF-Seite als Bild und lässt sie von Gemini
+ * vorlesen/transkribieren. Umgeht damit Schriftprobleme der Textebene und
+ * funktioniert auch bei gescannten PDFs. Mehrere Seiten werden parallel
+ * verarbeitet (begrenzte Gleichzeitigkeit).
  */
 export async function ocrPdf(
   file: File,
@@ -108,37 +131,31 @@ export async function ocrPdf(
   const total = pdf.numPages;
   const { title, author } = await readMeta(pdf);
 
-  const pageTexts: string[] = [];
-  for (let pageNum = 1; pageNum <= total; pageNum++) {
-    if (signal?.aborted) throw new Error('Abgebrochen');
-    const page = await pdf.getPage(pageNum);
-    const base = page.getViewport({ scale: 1 });
-    // Auf ~1600px Breite skalieren – gut lesbar, aber nicht zu groß.
-    const scale = Math.min(2.5, Math.max(1.2, 1600 / base.width));
-    const viewport = page.getViewport({ scale });
+  const results: string[] = new Array(total).fill('');
+  let nextPage = 1;
+  let completed = 0;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.ceil(viewport.width);
-    canvas.height = Math.ceil(viewport.height);
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      const base64 = (canvas.toDataURL('image/jpeg', 0.72).split(',')[1] as string) || '';
-      const pageText = await ocrImage(apiKey, model, base64, 'image/jpeg', signal);
-      if (pageText && pageText.trim()) pageTexts.push(pageText.trim());
+  const worker = async () => {
+    while (true) {
+      if (signal?.aborted) throw new Error('Abgebrochen');
+      const pageNum = nextPage++;
+      if (pageNum > total) return;
+      const page = await pdf.getPage(pageNum);
+      const base64 = await renderPageToJpeg(page);
+      page.cleanup();
+      const text = base64 ? await ocrImage(apiKey, model, base64, 'image/jpeg', signal) : '';
+      results[pageNum - 1] = text.trim();
+      completed++;
+      onProgress?.({ page: completed, total });
     }
-    // Speicher freigeben
-    canvas.width = 0;
-    canvas.height = 0;
-    page.cleanup();
-    onProgress?.({ page: pageNum, total });
-  }
+  };
+
+  const concurrency = Math.min(3, total);
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   await pdf.cleanup();
   await loadingTask.destroy();
 
-  const text = cleanupText(pageTexts.join('\n\n'));
+  const text = cleanupText(results.filter((t) => t).join('\n\n'));
   return { text, pageCount: total, title, author };
 }

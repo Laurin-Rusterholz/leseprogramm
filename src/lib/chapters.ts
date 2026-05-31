@@ -193,7 +193,12 @@ export function heuristicChapters(text: string): Chapter[] {
   }
 
   // Zu wenige Überschriften gefunden -> in gleichmäßige Abschnitte teilen
-  if (points.length < 2) {
+  // Zu wenige – oder bei großen Texten verdächtig viele – „Überschriften"
+  // (typisch, wenn jede fett gesetzte Zeile als Kapitel erkannt wird):
+  // dann lieber in gleichmäßige Abschnitte teilen.
+  const words = (text.match(/\S+/g) || []).length;
+  const overSegmented = words > 2000 && points.length >= 2 && words / points.length < 200;
+  if (points.length < 2 || overSegmented) {
     return splitIntoSections(text);
   }
   return buildChaptersFromPoints(text, points);

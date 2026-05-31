@@ -708,6 +708,71 @@ input[type='range']::-moz-range-thumb {
   color: var(--accent);
 }
 
+/* ----- Auswahl der Importmethode ----- */
+.choice {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--ink);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s var(--ease);
+}
+.choice:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-soft);
+}
+.choice:active:not(:disabled) {
+  transform: scale(0.99);
+}
+.choice:disabled {
+  opacity: 0.5;
+}
+.choice .ic {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(140deg, var(--accent-2), var(--accent));
+  color: #fff;
+  flex: none;
+}
+.choice .ic svg {
+  width: 22px;
+  height: 22px;
+}
+.choice .txt {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.choice .txt b {
+  font-size: 1.04rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.choice .txt span {
+  color: var(--ink-faint);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.choice .tag {
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--card));
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
 /* ----- Import-Overlay ----- */
 .import-overlay {
   position: fixed;

@@ -20,6 +20,7 @@ import { Library } from './components/Library';
 import { Reader } from './components/Reader';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ImportOverlay } from './components/ImportOverlay';
+import { ImportChoice, type ExtractMethod } from './components/ImportChoice';
 import { Toasts, type ToastItem, type ToastType } from './components/Toasts';
 import { IconGear, IconSparkles } from './components/Icons';
 
@@ -45,6 +46,7 @@ export default function App() {
   const [importing, setImporting] = useState<ImportState>(IDLE_IMPORT);
   const [regliederBusy, setRegliederBusy] = useState(false);
   const [mode, setMode] = useState<StorageMode>('unbekannt');
+  const [pending, setPending] = useState<File[] | null>(null);
 
   useLayoutEffect(() => {
     document.body.dataset.theme = settings.theme;
@@ -72,70 +74,75 @@ export default function App() {
 
   // ---- PDF-Import ----
   const importOne = useCallback(
-    async (file: File) => {
+    async (file: File, method: ExtractMethod) => {
+      const baseTitle = file.name.replace(/\.pdf$/i, '');
+      const ocrProgress = (p: { page: number; total: number }) =>
+        setImporting((s) => ({
+          ...s,
+          stage: 'Die KI liest die Seiten …',
+          detail: `Seite ${p.page} von ${p.total}`,
+          progress: p.total ? p.page / p.total : null,
+          ai: true,
+        }));
+
       try {
-        setImporting({
-          active: true,
-          title: file.name.replace(/\.pdf$/i, ''),
-          stage: 'PDF wird gelesen …',
-          progress: 0,
-        });
+        let text = '';
+        let pageCount = 0;
+        let title: string | undefined;
+        let author: string | undefined;
 
-        const extracted = await extractPdf(file, (p) => {
-          setImporting((s) => ({
-            ...s,
-            stage: 'Text wird extrahiert …',
-            detail: `Seite ${p.page} von ${p.total}`,
-            progress: p.total ? p.page / p.total : null,
-          }));
-        });
-        const { pageCount, title, author } = extracted;
-        let text = extracted.text;
-        const bookTitle = (title && title.length > 1 ? title : file.name.replace(/\.pdf$/i, '')).trim();
-
-        // Wenig Text trotz mehrerer Seiten -> vermutlich gescannt: OCR per KI anbieten
-        const lowYield = text.trim().length < Math.max(80, pageCount * 40);
-        if (lowYield && settings.apiKey.trim()) {
-          const ok = window.confirm(
-            `In „${bookTitle}“ wurde kaum Text gefunden ` +
-              `(${text.trim().length} Zeichen auf ${pageCount} Seite${pageCount === 1 ? '' : 'n'}). ` +
-              `Wahrscheinlich ist das PDF gescannt.\n\n` +
-              `Soll die KI den Text aus den Seitenbildern auslesen (OCR)? ` +
-              `Dabei werden ${pageCount} Seiten einzeln an Google Gemini gesendet – ` +
-              `das kann dauern und Anfrage-Limits/Kosten verursachen.`,
+        if (method === 'ki') {
+          setImporting({ active: true, title: baseTitle, stage: 'Die KI liest die Seiten …', progress: null, ai: true });
+          const r = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress);
+          text = r.text;
+          pageCount = r.pageCount;
+          title = r.title;
+          author = r.author;
+        } else {
+          setImporting({ active: true, title: baseTitle, stage: 'Text wird extrahiert …', progress: 0 });
+          const r = await extractPdf(file, (p) =>
+            setImporting((s) => ({
+              ...s,
+              stage: 'Text wird extrahiert …',
+              detail: `Seite ${p.page} von ${p.total}`,
+              progress: p.total ? p.page / p.total : null,
+            })),
           );
-          if (ok) {
-            try {
-              const ocr = await ocrPdf(file, settings.apiKey.trim(), settings.model, (p) =>
-                setImporting((s) => ({
-                  ...s,
-                  stage: 'KI liest die Seiten (OCR) …',
-                  detail: `Seite ${p.page} von ${p.total}`,
-                  progress: p.total ? p.page / p.total : null,
-                  ai: true,
-                })),
-              );
+          text = r.text;
+          pageCount = r.pageCount;
+          title = r.title;
+          author = r.author;
+
+          // Wenig Text trotz mehrerer Seiten -> OCR per KI anbieten
+          const lowYield = text.trim().length < Math.max(80, pageCount * 40);
+          if (lowYield && settings.apiKey.trim()) {
+            const ok = window.confirm(
+              `In „${(title && title.length > 1 ? title : baseTitle)}“ wurde wenig Text gefunden ` +
+                `(${text.trim().length} Zeichen auf ${pageCount} Seite${pageCount === 1 ? '' : 'n'}). ` +
+                `Soll stattdessen die KI die Seiten lesen? Das ist zuverlässiger, dauert aber etwas.`,
+            );
+            if (ok) {
+              const ocr = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress);
               if (ocr.text.trim().length > text.trim().length) text = ocr.text;
-            } catch (e) {
-              notify('OCR fehlgeschlagen: ' + (e instanceof Error ? e.message : 'Fehler'), 'error');
             }
           }
         }
+
+        const bookTitle = (title && title.length > 1 ? title : baseTitle).trim();
 
         if (!text || text.trim().length < 20) {
           notify(
             settings.apiKey.trim()
               ? 'Aus diesem PDF ließ sich kein Text gewinnen.'
-              : 'Aus diesem PDF ließ sich kaum Text gewinnen – vermutlich gescannt. Hinterlege einen Gemini-Schlüssel, dann kann die KI die Seiten per OCR auslesen.',
+              : 'Aus diesem PDF ließ sich kaum Text gewinnen – vermutlich gescannt oder mit Spezialschriften. Hinterlege einen Gemini-Schlüssel und wähle „Genau lesen (KI)“.',
             'error',
           );
           setImporting(IDLE_IMPORT);
           return;
         }
-        const id = makeId();
+
         let chapters;
         let chapterSource: Book['chapterSource'] = 'heuristik';
-
         if (settings.apiKey.trim()) {
           try {
             setImporting({
@@ -156,9 +163,7 @@ export default function App() {
             chapterSource = 'ki';
           } catch (e) {
             notify(
-              'KI-Kapitel nicht möglich (' +
-                (e instanceof Error ? e.message : 'Fehler') +
-                '). Kapitel wurden automatisch geschätzt.',
+              'KI-Kapitel nicht möglich (' + (e instanceof Error ? e.message : 'Fehler') + '). Kapitel wurden geschätzt.',
               'error',
             );
             chapters = heuristicChapters(text);
@@ -170,7 +175,7 @@ export default function App() {
         if (chapters.length <= 1 && chapterSource !== 'ki') chapterSource = 'einzel';
 
         const book: Book = {
-          id,
+          id: makeId(),
           title: bookTitle,
           author,
           text,
@@ -199,14 +204,24 @@ export default function App() {
     [settings.apiKey, settings.model, notify, refresh],
   );
 
-  const handleFiles = useCallback(
-    async (files: File[]) => {
+  const runImport = useCallback(
+    async (files: File[], method: ExtractMethod) => {
       for (const f of files) {
         // eslint-disable-next-line no-await-in-loop
-        await importOne(f);
+        await importOne(f, method);
       }
     },
     [importOne],
+  );
+
+  const handleFiles = useCallback(
+    (files: File[]) => {
+      // Mit Schlüssel: Methode wählen lassen (KI ist empfohlen).
+      // Ohne Schlüssel: direkt die Textebene nutzen.
+      if (settings.apiKey.trim()) setPending(files);
+      else void runImport(files, 'text');
+    },
+    [settings.apiKey, runImport],
   );
 
   // ---- Buch öffnen / löschen / aktualisieren ----
@@ -368,6 +383,20 @@ export default function App() {
           speech={speech}
           notify={notify}
           onClose={() => setShowSettings(false)}
+        />
+      )}
+
+      {pending && (
+        <ImportChoice
+          fileName={pending[0]?.name.replace(/\.pdf$/i, '') || ''}
+          count={pending.length}
+          hasKey={hasKey}
+          onChoose={(method: ExtractMethod) => {
+            const files = pending;
+            setPending(null);
+            void runImport(files, method);
+          }}
+          onClose={() => setPending(null)}
         />
       )}
 
