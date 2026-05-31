@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Book, BookMeta } from './lib/types';
 import { useSettings } from './hooks/useSettings';
 import { useSpeech } from './hooks/useSpeech';
@@ -13,7 +13,7 @@ import {
   type StorageMode,
 } from './lib/storage';
 import { extractPdf, ocrPdf } from './lib/pdf';
-import { detectChapters, configureRateLimit } from './lib/gemini';
+import { detectChapters, configureRateLimit, onRateLimit } from './lib/gemini';
 import { chaptersFromAiMarkers, heuristicChapters, makeId } from './lib/chapters';
 import { countWords } from './lib/tokenize';
 import { Library } from './components/Library';
@@ -47,6 +47,7 @@ export default function App() {
   const [regliederBusy, setRegliederBusy] = useState(false);
   const [mode, setMode] = useState<StorageMode>('unbekannt');
   const [pending, setPending] = useState<File[] | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useLayoutEffect(() => {
     document.body.dataset.theme = settings.theme;
@@ -56,6 +57,18 @@ export default function App() {
   useEffect(() => {
     configureRateLimit(settings.geminiRpm);
   }, [settings.geminiRpm]);
+
+  // Wartezeiten wegen Rate-Limit in der Oberfläche anzeigen
+  useEffect(() => {
+    onRateLimit(({ waitMs, attempt }) =>
+      setImporting((s) =>
+        s.active
+          ? { ...s, detail: `Limit erreicht – warte ${Math.ceil(waitMs / 1000)} s … (Versuch ${attempt + 2})` }
+          : s,
+      ),
+    );
+    return () => onRateLimit(null);
+  }, []);
 
   const notify = useCallback((message: string, type: ToastType = 'info') => {
     const id = makeId();
@@ -90,6 +103,10 @@ export default function App() {
           ai: true,
         }));
 
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const signal = controller.signal;
+
       try {
         let text = '';
         let pageCount = 0;
@@ -98,7 +115,7 @@ export default function App() {
 
         if (method === 'ki') {
           setImporting({ active: true, title: baseTitle, stage: 'Die KI liest die Seiten …', progress: null, ai: true });
-          const r = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress);
+          const r = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress, signal);
           text = r.text;
           pageCount = r.pageCount;
           title = r.title;
@@ -127,7 +144,7 @@ export default function App() {
                 `Soll stattdessen die KI die Seiten lesen? Das ist zuverlässiger, dauert aber etwas.`,
             );
             if (ok) {
-              const ocr = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress);
+              const ocr = await ocrPdf(file, settings.apiKey.trim(), settings.model, ocrProgress, signal);
               if (ocr.text.trim().length > text.trim().length) text = ocr.text;
             }
           }
@@ -158,15 +175,21 @@ export default function App() {
               progress: null,
               ai: true,
             });
-            const markers = await detectChapters(settings.apiKey.trim(), settings.model, text, (p) =>
-              setImporting((s) => ({
-                ...s,
-                detail: p.total > 1 ? `Abschnitt ${p.step} von ${p.total}` : 'Analysiere …',
-              })),
+            const markers = await detectChapters(
+              settings.apiKey.trim(),
+              settings.model,
+              text,
+              (p) =>
+                setImporting((s) => ({
+                  ...s,
+                  detail: p.total > 1 ? `Abschnitt ${p.step} von ${p.total}` : 'Analysiere …',
+                })),
+              signal,
             );
             chapters = chaptersFromAiMarkers(text, markers);
             chapterSource = 'ki';
           } catch (e) {
+            if (signal.aborted || (e instanceof Error && e.name === 'AbortError')) throw e;
             notify(
               'KI-Kapitel nicht möglich (' + (e instanceof Error ? e.message : 'Fehler') + '). Kapitel wurden geschätzt.',
               'error',
@@ -201,13 +224,23 @@ export default function App() {
         setCurrent(book);
         saveLastBookId(book.id);
       } catch (e) {
-        console.error(e);
-        notify('Fehler beim Import: ' + (e instanceof Error ? e.message : 'Unbekannt'), 'error');
+        if (e instanceof Error && e.name === 'AbortError') {
+          notify('Import abgebrochen.', 'info');
+        } else {
+          console.error(e);
+          notify('Fehler beim Import: ' + (e instanceof Error ? e.message : 'Unbekannt'), 'error');
+        }
         setImporting(IDLE_IMPORT);
+      } finally {
+        abortRef.current = null;
       }
     },
     [settings.apiKey, settings.model, notify, refresh],
   );
+
+  const cancelImport = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const runImport = useCallback(
     async (files: File[], method: ExtractMethod) => {
@@ -412,6 +445,7 @@ export default function App() {
           detail={importing.detail}
           progress={importing.progress}
           ai={importing.ai}
+          onCancel={cancelImport}
         />
       )}
 

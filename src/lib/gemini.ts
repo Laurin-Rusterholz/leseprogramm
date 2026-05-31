@@ -25,7 +25,11 @@ function friendlyError(status: number, raw: string): GeminiError {
     return new GeminiError('Der API-Schlüssel ist ungültig. Bitte prüfe ihn in den Einstellungen.', status);
   }
   if (status === 429) {
-    return new GeminiError('Limit erreicht (zu viele Anfragen). Bitte kurz warten und erneut versuchen.', status);
+    return new GeminiError(
+      'Rate-Limit erreicht (zu viele Anfragen). Der kostenlose Tarif erlaubt nur wenige ' +
+        'Anfragen pro Minute – in den Einstellungen „Anfragen pro Minute" senken und später erneut versuchen.',
+      status,
+    );
   }
   if (status === 403) {
     return new GeminiError('Zugriff verweigert. Ist die "Generative Language API" für deinen Schlüssel aktiviert?', status);
@@ -61,7 +65,21 @@ export async function listModels(apiKey: string): Promise<GeminiModelInfo[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+/** Abbrechbares Warten. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) return reject(new DOMException('Abgebrochen', 'AbortError'));
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        reject(new DOMException('Abgebrochen', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
 
 // ---- Globale Drosselung aller Gemini-Aufrufe ------------------------------
 // Ohne Drosselung sprengen viele Anfragen (v. a. das Seiten-OCR) das
@@ -71,6 +89,12 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 let requestsPerMinute = 12;
 export function configureRateLimit(rpm: number): void {
   if (Number.isFinite(rpm) && rpm > 0) requestsPerMinute = Math.min(300, Math.max(1, rpm));
+}
+
+// Statusmeldung bei Rate-Limit-Wartezeiten (für die Oberfläche).
+let rateLimitListener: ((info: { waitMs: number; attempt: number }) => void) | null = null;
+export function onRateLimit(cb: ((info: { waitMs: number; attempt: number }) => void) | null): void {
+  rateLimitListener = cb;
 }
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -115,8 +139,10 @@ function parseRetryDelayMs(bodyText: string, retryAfter: string | null): number 
 async function postGenerateContent(apiKey: string, model: string, body: unknown, signal?: AbortSignal): Promise<any> {
   if (!apiKey) throw new GeminiError('Kein API-Schlüssel hinterlegt.');
   const url = `${BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const MAX_ATTEMPTS = 4;
   return schedule(async () => {
     for (let attempt = 0; ; attempt++) {
+      if (signal?.aborted) throw new DOMException('Abgebrochen', 'AbortError');
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -126,9 +152,20 @@ async function postGenerateContent(apiKey: string, model: string, body: unknown,
       if (res.ok) return res.json();
       const txt = await res.text().catch(() => '');
       const retryable = res.status === 429 || res.status === 500 || res.status === 503;
-      if (retryable && attempt < 7) {
-        const delay = parseRetryDelayMs(txt, res.headers.get('retry-after')) || Math.min(60000, 1500 * 2 ** attempt);
-        await sleep(delay + 250);
+      const serverDelay = parseRetryDelayMs(txt, res.headers.get('retry-after'));
+      // Sagt der Server eine lange Wartezeit (> 60s), ist das Kontingent für
+      // eine Weile erschöpft -> nicht endlos warten, sofort klar abbrechen.
+      if (res.status === 429 && serverDelay > 60000) {
+        throw new GeminiError(
+          'Gemini-Kontingent erschöpft (Rate-Limit). Bitte später erneut versuchen, in den ' +
+            'Einstellungen „Anfragen pro Minute" senken oder Abrechnung/anderes Modell verwenden.',
+          429,
+        );
+      }
+      if (retryable && attempt < MAX_ATTEMPTS - 1) {
+        const delay = Math.min(20000, serverDelay || 1500 * 2 ** attempt);
+        rateLimitListener?.({ waitMs: delay, attempt });
+        await sleep(delay + 250, signal);
         continue;
       }
       throw friendlyError(res.status, txt);

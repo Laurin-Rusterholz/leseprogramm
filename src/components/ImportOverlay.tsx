@@ -6,6 +6,7 @@ export function ImportOverlay({
   detail,
   progress,
   ai,
+  onCancel,
 }: {
   title: string;
   stage: string;
@@ -13,6 +14,7 @@ export function ImportOverlay({
   /** 0..1 oder null für unbestimmt */
   progress: number | null;
   ai?: boolean;
+  onCancel?: () => void;
 }) {
   return (
     <div className="import-overlay">
@@ -27,6 +29,11 @@ export function ImportOverlay({
           <div className="stage" style={{ fontSize: '0.82rem', marginTop: 10 }}>
             {detail}
           </div>
+        )}
+        {onCancel && (
+          <button className="btn small" style={{ marginTop: 22 }} onClick={onCancel}>
+            Abbrechen
+          </button>
         )}
       </div>
     </div>
