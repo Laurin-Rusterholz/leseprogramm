@@ -119,6 +119,7 @@ const SETTINGS_KEY = 'leseprogramm.settings';
 export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   model: 'gemini-2.0-flash',
+  geminiRpm: 12,
   wpm: 350,
   punctuationPause: 1,
   longWordPause: true,

@@ -13,7 +13,7 @@ import {
   type StorageMode,
 } from './lib/storage';
 import { extractPdf, ocrPdf } from './lib/pdf';
-import { detectChapters } from './lib/gemini';
+import { detectChapters, configureRateLimit } from './lib/gemini';
 import { chaptersFromAiMarkers, heuristicChapters, makeId } from './lib/chapters';
 import { countWords } from './lib/tokenize';
 import { Library } from './components/Library';
@@ -51,6 +51,11 @@ export default function App() {
   useLayoutEffect(() => {
     document.body.dataset.theme = settings.theme;
   }, [settings.theme]);
+
+  // KI-Drosselung an die Einstellung koppeln (Schutz vor 429)
+  useEffect(() => {
+    configureRateLimit(settings.geminiRpm);
+  }, [settings.geminiRpm]);
 
   const notify = useCallback((message: string, type: ToastType = 'info') => {
     const id = makeId();

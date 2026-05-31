@@ -47,6 +47,8 @@ export type ReadingMode = 'buch' | 'fokus';
 export interface Settings {
   apiKey: string;
   model: string;
+  /** Max. KI-Anfragen pro Minute (Schutz vor Rate-Limits/429) */
+  geminiRpm: number;
   // Fokus-Modus (RSVP)
   wpm: number;
   /** Zusätzliche Pause an Satzzeichen (Faktor) */

@@ -150,7 +150,9 @@ export async function ocrPdf(
     }
   };
 
-  const concurrency = Math.min(3, total);
+  // Die eigentlichen KI-Aufrufe werden in gemini.ts global gedrosselt; hier
+  // genügt eine kleine Pipeline (rendern, während die Vorseite verarbeitet wird).
+  const concurrency = Math.min(2, total);
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   await pdf.cleanup();

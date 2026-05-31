@@ -142,6 +142,21 @@ export function SettingsPanel({
             geeignet.
           </span>
         </div>
+
+        <Slider
+          label="Anfragen pro Minute"
+          min={3}
+          max={60}
+          step={1}
+          value={settings.geminiRpm}
+          format={(v) => `${v}/min`}
+          onChange={(v) => update({ geminiRpm: Math.round(v) })}
+        />
+        <span className="hint">
+          Schützt vor „429 – zu viele Anfragen“. Der kostenlose Tarif erlaubt nur wenige Anfragen
+          pro Minute – bei Limits hier niedriger stellen (z. B. 10). Mit bezahltem Kontingent kannst
+          du höher gehen.
+        </span>
       </div>
 
       {/* Vorlesen */}

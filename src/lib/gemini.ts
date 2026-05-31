@@ -61,6 +61,81 @@ export async function listModels(apiKey: string): Promise<GeminiModelInfo[]> {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// ---- Globale Drosselung aller Gemini-Aufrufe ------------------------------
+// Ohne Drosselung sprengen viele Anfragen (v. a. das Seiten-OCR) das
+// Free-Tier-Limit (~15 Anfragen/Minute) und werden mit 429 abgewiesen.
+// Daher laufen ALLE generateContent-Aufrufe seriell mit Mindestabstand und
+// respektieren das vom Server gemeldete Retry-Delay.
+let requestsPerMinute = 12;
+export function configureRateLimit(rpm: number): void {
+  if (Number.isFinite(rpm) && rpm > 0) requestsPerMinute = Math.min(300, Math.max(1, rpm));
+}
+
+let chain: Promise<unknown> = Promise.resolve();
+let lastStart = 0;
+function schedule<T>(task: () => Promise<T>): Promise<T> {
+  const run = async (): Promise<T> => {
+    const minInterval = 60000 / requestsPerMinute;
+    const wait = Math.max(0, lastStart + minInterval - Date.now());
+    if (wait > 0) await sleep(wait);
+    lastStart = Date.now();
+    return task();
+  };
+  const result = chain.then(run, run);
+  chain = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+function parseRetryDelayMs(bodyText: string, retryAfter: string | null): number {
+  if (retryAfter) {
+    const s = parseInt(retryAfter, 10);
+    if (!Number.isNaN(s)) return s * 1000;
+  }
+  try {
+    const j = JSON.parse(bodyText);
+    for (const d of j?.error?.details || []) {
+      if (typeof d?.retryDelay === 'string') {
+        const m = d.retryDelay.match(/([\d.]+)s/);
+        if (m) return Math.ceil(parseFloat(m[1]) * 1000);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return 0;
+}
+
+/** Ein generateContent-Aufruf – global gedrosselt und mit 429-Wiederholung. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function postGenerateContent(apiKey: string, model: string, body: unknown, signal?: AbortSignal): Promise<any> {
+  if (!apiKey) throw new GeminiError('Kein API-Schlüssel hinterlegt.');
+  const url = `${BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  return schedule(async () => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (res.ok) return res.json();
+      const txt = await res.text().catch(() => '');
+      const retryable = res.status === 429 || res.status === 500 || res.status === 503;
+      if (retryable && attempt < 7) {
+        const delay = parseRetryDelayMs(txt, res.headers.get('retry-after')) || Math.min(60000, 1500 * 2 ** attempt);
+        await sleep(delay + 250);
+        continue;
+      }
+      throw friendlyError(res.status, txt);
+    }
+  });
+}
+
 interface GenerateOptions {
   responseSchema?: unknown;
   temperature?: number;
@@ -84,19 +159,7 @@ export async function generateText(
     },
   };
 
-  const res = await fetch(
-    `${BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: opts.signal,
-    },
-  );
-
-  if (!res.ok) throw friendlyError(res.status, await res.text());
-  const data = await res.json();
-
+  const data = await postGenerateContent(apiKey, model, body, opts.signal);
   const candidate = data.candidates?.[0];
   if (!candidate) {
     if (data.promptFeedback?.blockReason) {
@@ -107,8 +170,6 @@ export async function generateText(
   const parts = candidate.content?.parts || [];
   return parts.map((p: { text?: string }) => p.text || '').join('');
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Liest den Text einer Seite per Gemini-Vision aus einem (JPEG-)Bild aus.
@@ -138,25 +199,9 @@ export async function ocrImage(
     generationConfig: { temperature: 0 },
   };
 
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(
-      `${BASE}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal,
-      },
-    );
-    if (res.status === 429 && attempt < 4) {
-      await sleep(1500 * (attempt + 1));
-      continue;
-    }
-    if (!res.ok) throw friendlyError(res.status, await res.text());
-    const data = await res.json();
-    const parts = data.candidates?.[0]?.content?.parts || [];
-    return parts.map((p: { text?: string }) => p.text || '').join('');
-  }
+  const data = await postGenerateContent(apiKey, model, body, signal);
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  return parts.map((p: { text?: string }) => p.text || '').join('');
 }
 
 const CHAPTER_SCHEMA = {
