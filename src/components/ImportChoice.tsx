@@ -22,30 +22,30 @@ export function ImportChoice({
         Wie soll der Text gewonnen werden?
       </p>
 
+      <button className="choice" onClick={() => onChoose('text')}>
+        <span className="ic">
+          <IconText />
+        </span>
+        <span className="txt">
+          <b>
+            Schnell (Textebene) <span className="tag">empfohlen</span>
+          </b>
+          <span>
+            Nutzt die im PDF hinterlegte Textebene – sofort fertig und kostenlos. Für die meisten
+            digitalen Bücher die richtige Wahl. Bei zu wenig Text wird automatisch die KI angeboten.
+          </span>
+        </span>
+      </button>
+
       <button className="choice" onClick={() => onChoose('ki')} disabled={!hasKey}>
         <span className="ic">
           <IconSparkles />
         </span>
         <span className="txt">
-          <b>
-            Genau lesen (KI) <span className="tag">empfohlen</span>
-          </b>
+          <b>Genau lesen (KI)</b>
           <span>
-            Die KI liest jede Seite als Bild. Am zuverlässigsten – auch bei schwierigen Schriften
-            oder gescannten PDFs. Braucht einen Gemini-Schlüssel; dauert je nach Seitenzahl etwas.
-          </span>
-        </span>
-      </button>
-
-      <button className="choice" onClick={() => onChoose('text')}>
-        <span className="ic" style={{ background: 'var(--paper-3)', color: 'var(--ink-soft)' }}>
-          <IconText />
-        </span>
-        <span className="txt">
-          <b>Schnell (Textebene)</b>
-          <span>
-            Nutzt die im PDF hinterlegte Textebene. Sofort fertig – bei manchen PDFs aber
-            unvollständig (z. B. wenn nur Überschriften erkannt werden).
+            Die KI liest jede Seite als Bild. Für gescannte oder schwierige PDFs, bei denen die
+            Textebene unbrauchbar ist. Braucht einen Gemini-Schlüssel; dauert je nach Seitenzahl.
           </span>
         </span>
       </button>

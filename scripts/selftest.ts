@@ -6,6 +6,7 @@ import {
   heuristicChapters,
   findMarkerOffset,
   buildChaptersFromPoints,
+  detectTocEnd,
 } from '../src/lib/chapters';
 import { reconstructPageText, cleanupText, looksLikeHeading } from '../src/lib/pdfText';
 
@@ -55,21 +56,24 @@ check('token0 -> satz0', model.tokenToSentence[0] === 0);
 const s2 = model.sentences[2];
 check('tokenAtChar start', tokenAtChar(model, 2, 0) === s2.first, { got: tokenAtChar(model, 2, 0), first: s2.first });
 
-// ----- KI-Marker -> Kapitel -----
+// ----- KI-Marker -> Kapitel (Kapitel mit echtem, ausreichend langem Inhalt) -----
+const vorwortBody = 'Dies sind einige einleitende Worte zum Buch und seinem Anliegen. '.repeat(8);
+const dorfBody = 'Es war einmal ein kleines Dorf am Fluss, in dem zufriedene Menschen lebten. '.repeat(8);
+const rueckBody = 'Viele Jahre später kehrte sie in das Dorf ihrer Kindheit zurück. '.repeat(8);
 const book =
-  'Vorwort\nEin paar einleitende Worte zum Buch.\n\n' +
-  'Kapitel 1\nEs war einmal ein kleines Dorf am Fluss.\n\n' +
-  'Kapitel 2\nViele Jahre später kehrte sie zurück.';
+  'Vorwort\n' + vorwortBody + '\n\n' +
+  'Kapitel 1\n' + dorfBody + '\n\n' +
+  'Kapitel 2\n' + rueckBody;
 const markers = [
-  { title: 'Vorwort', start_marker: 'Ein paar einleitende Worte' },
-  { title: 'Das Dorf', start_marker: 'Es war einmal ein kleines Dorf' },
+  { title: 'Vorwort', start_marker: 'Dies sind einige einleitende Worte' },
+  { title: 'Das Dorf', start_marker: 'Es war einmal ein kleines Dorf am Fluss' },
   { title: 'Rückkehr', start_marker: 'Viele Jahre später kehrte sie' },
 ];
 const aiChapters = chaptersFromAiMarkers(book, markers);
 check('ki kapitelanzahl', aiChapters.length === 3, aiChapters.map((c) => c.title));
 check('ki kapitel2 titel', aiChapters[1].title === 'Das Dorf');
 check('ki kapitel2 text', aiChapters[1].text.includes('kleines Dorf'));
-check('ki kapitel3 text', aiChapters[2].text.includes('kehrte sie zurück'));
+check('ki kapitel3 text', aiChapters[2].text.includes('kehrte sie'));
 // Lückenlose Abdeckung
 check('ki abdeckung', aiChapters[0].start === 0 && aiChapters[2].end === book.length);
 
@@ -84,6 +88,41 @@ check('fuzzy marker gefunden', offset > 0, offset);
 // ----- Heuristik -----
 const hChapters = heuristicChapters(book);
 check('heuristik findet kapitel', hChapters.length >= 2, hChapters.map((c) => c.title));
+
+// ----- Inhaltsverzeichnis wird übersprungen (Kernfix) -----
+const tBody1 = 'Dies ist die wahre Einführung mit ausreichend Fließtext für einen Absatz. '.repeat(8);
+const tBody2 = 'Das Hindernis bist du selbst und niemand sonst steht dir im Weg. '.repeat(8);
+const tBody3 = 'Der Weg nach vorn beginnt mit einem einzigen mutigen Schritt. '.repeat(8);
+const tocBook =
+  'INHALTSVERZEICHNIS\n' +
+  'EINFÜHRUNG\n' +
+  '1 DAS HINDERNIS BIST DU SELBST\n' +
+  '2 DER WEG NACH VORN\n' +
+  '3 DAS ZIEL VOR AUGEN\n' +
+  'NACHWORT\n' +
+  'DANKSAGUNG\n' +
+  '\n' +
+  'Dieses Buch ist allen gewidmet, die den Mut haben, sich selbst ehrlich zu begegnen und Muster zu durchbrechen.\n\n' +
+  'EINFÜHRUNG\n' + tBody1 + '\n\n' +
+  '1 DAS HINDERNIS BIST DU SELBST\n' + tBody2 + '\n\n' +
+  '2 DER WEG NACH VORN\n' + tBody3;
+
+check('toc erkannt', detectTocEnd(tocBook) > 0, detectTocEnd(tocBook));
+const tocMarkers = [
+  { title: 'Einführung', start_marker: 'EINFÜHRUNG' },
+  { title: 'Das Hindernis', start_marker: '1 DAS HINDERNIS BIST DU SELBST' },
+  { title: 'Der Weg', start_marker: '2 DER WEG NACH VORN' },
+];
+const tocChapters = chaptersFromAiMarkers(tocBook, tocMarkers);
+const hindernis = tocChapters.find((c) => c.title === 'Das Hindernis');
+check('toc: hindernis-kapitel existiert', !!hindernis, tocChapters.map((c) => c.title));
+check(
+  'toc: hindernis hat echten inhalt (nicht TOC-slice)',
+  !!hindernis && hindernis.text.includes('Das Hindernis bist du selbst und niemand') && hindernis.text.length > 400,
+  hindernis?.text.length,
+);
+const tinyMid = tocChapters.slice(1, -1).filter((c) => c.text.length < 200);
+check('toc: keine mini-slices in der mitte', tinyMid.length === 0, tinyMid.map((c) => c.title));
 
 // buildChaptersFromPoints: sehr nahe Punkte werden verschmolzen
 const pts = buildChaptersFromPoints('AAAA BBBB CCCC', [
