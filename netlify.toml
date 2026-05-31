@@ -1,5 +1,5 @@
 # Netlify-Konfiguration für das Leseprogramm
-# Reine Client-App: Build mit Vite, Auslieferung aus dem dist-Ordner.
+# Frontend: Vite-Build (dist). Speicher: Netlify Functions + Netlify Blobs.
 
 [build]
   command = "npm run build"
@@ -8,7 +8,22 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# SPA-Fallback: alle Routen auf index.html (Single-Page-App)
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# Saubere API-Pfade auf die Functions umschreiben (vor dem SPA-Fallback!)
+[[redirects]]
+  from = "/api/books"
+  to = "/.netlify/functions/books"
+  status = 200
+
+[[redirects]]
+  from = "/api/settings"
+  to = "/.netlify/functions/settings"
+  status = 200
+
+# SPA-Fallback: alle übrigen Routen auf index.html
 [[redirects]]
   from = "/*"
   to = "/index.html"

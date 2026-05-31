@@ -28,6 +28,20 @@ export interface Book {
   lastChapterId?: string;
 }
 
+/** Schlanke Metadaten für die Bibliotheksübersicht (ohne den großen Buchtext). */
+export interface BookMeta {
+  id: string;
+  title: string;
+  author?: string;
+  wordCount: number;
+  pageCount: number;
+  chapterCount: number;
+  createdAt: number;
+  chapterSource: 'ki' | 'heuristik' | 'einzel';
+  lastChapterId?: string;
+  progress?: Record<string, number>;
+}
+
 export type ReadingMode = 'buch' | 'fokus';
 
 export interface Settings {

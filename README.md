@@ -12,10 +12,9 @@ Optimiert für das **iPad**, läuft vollständig im Browser und ist ideal für
   Bücher, mit Rekonstruktion von Zeilen/Absätzen und Zusammenfügen getrennter
   Wörter.
 - **Kapitel per KI**: Google Gemini gliedert das Buch in Kapitel. Der
-  API-Schlüssel wird **im Frontend eingegeben** und nur lokal im Browser
-  gespeichert. Sehr große Bücher werden automatisch in Blöcke geteilt. Ohne
-  Schlüssel werden Kapitel heuristisch geschätzt; jederzeit „Neu mit KI
-  gliedern“ möglich.
+  API-Schlüssel wird **im Frontend eingegeben**. Sehr große Bücher werden
+  automatisch in Blöcke geteilt. Ohne Schlüssel werden Kapitel heuristisch
+  geschätzt; jederzeit „Neu mit KI gliedern“ möglich.
 - **Zwei Lesemodi**
   - **Buch**: angenehme Lesetypografie, Schriftgröße/Zeilenabstand einstellbar,
     Kapitelnavigation.
@@ -25,7 +24,12 @@ Optimiert für das **iPad**, läuft vollständig im Browser und ist ideal für
 - **Vorlesen** (Web Speech API) in beiden Modi zuschaltbar, mit Stimmenauswahl,
   Tempo und Tonhöhe. In der Buchansicht wird der gerade gesprochene Satz
   hervorgehoben; im Fokus-Modus laufen Wortanzeige und Stimme synchron.
-- **Bibliothek** mit lokaler Speicherung der Bücher (IndexedDB).
+- **Speicherung auf Netlify Blobs**: Bücher **und** Einstellungen (inkl.
+  API-Schlüssel) werden über Netlify Functions auf **Netlify Blobs** abgelegt –
+  also serverseitig und damit geräteübergreifend verfügbar. Ist die Function-API
+  nicht erreichbar (z. B. reines `vite dev`), wird transparent auf lokalen
+  Speicher (IndexedDB/localStorage) zurückgegriffen. Oben rechts zeigt ein
+  Symbol den aktiven Modus an (☁︎ Netlify / ⌂ Lokal).
 - **Warmes Design** mit drei Farbstimmungen (Warm, Sepia, Nacht).
 
 ## Tastatur & Touch im Fokus-Modus
@@ -37,29 +41,53 @@ Optimiert für das **iPad**, läuft vollständig im Browser und ist ideal für
 | Schneller / langsamer | ↑ / ↓ | Regler unten |
 | Verlassen | Esc | ✕ oben links |
 
+## Speicherung (Netlify Blobs)
+
+Die App spricht zwei Netlify Functions an, die [Netlify Blobs](https://docs.netlify.com/blobs/overview/)
+als Speicher nutzen:
+
+- `netlify/functions/books.mts` → `/api/books` (Liste, einzelnes Buch, Speichern,
+  Fortschritt-Update, Löschen)
+- `netlify/functions/settings.mts` → `/api/settings` (Einstellungen inkl. API-Key)
+
+Der Buchtext wird getrennt von einem schlanken Index gespeichert, sodass beim
+Mitschreiben des Lesefortschritts nicht jedes Mal das ganze Buch übertragen wird.
+Netlify Blobs ist auf Netlify **ohne weitere Konfiguration** aktiv.
+
+> **Sicherheitshinweis:** Diese Variante hat **keinen Zugriffsschutz** – wer die
+> Seiten-URL kennt, kann die Bibliothek (und den dort abgelegten API-Schlüssel)
+> über `/api/...` lesen und ändern. Für eine private Nutzung empfiehlt sich ein
+> Passwortschutz (z. B. Netlify-Umgebungsvariable + Prüfung in den Functions)
+> oder Netlify Identity. Sag Bescheid, dann rüste ich das nach.
+
 ## Entwicklung
 
 ```bash
 npm install
-npm run dev        # Entwicklungsserver
+npm run dev        # nur Frontend (Vite) – Speicher fällt auf lokal zurück
 npm run build      # Produktionsbuild nach dist/
-npm run preview    # Build lokal ansehen
+npm test           # Logik- und Function-Tests
+
+# Mit Netlify Blobs/Functions lokal (empfohlen zum vollständigen Testen):
+npm i -g netlify-cli
+netlify dev        # startet Vite + Functions + lokalen Blobs-Sandbox
 ```
 
 ## Deployment auf Netlify
 
-Das Repo enthält bereits `netlify.toml`:
+Das Repo enthält bereits `netlify.toml` (Build, Publish, Functions-Verzeichnis
+und `/api`-Routing):
 
 - **Build command:** `npm run build`
 - **Publish directory:** `dist`
+- **Functions:** `netlify/functions`
 
-Einfach das Repository in Netlify importieren – fertig. Es werden keine
-Server-Funktionen und keine Umgebungsvariablen benötigt, da alles im Browser
-läuft und der Gemini-Schlüssel im Frontend eingegeben wird.
+Repository in Netlify importieren – fertig. Netlify Blobs ist automatisch
+verfügbar; es sind keine Umgebungsvariablen nötig.
 
-> Hinweis: Da der API-Schlüssel im Browser verwendet wird, ist er für die App
-> sichtbar. Verwende am besten einen Schlüssel mit eng gefassten
-> Berechtigungen/Quoten. Er verlässt das Gerät nur in Anfragen direkt an Google.
+> Hinweis zum API-Schlüssel: Er wird im Frontend eingegeben, auf Blobs
+> gespeichert und für Anfragen direkt an Google verwendet. Nutze am besten einen
+> Schlüssel mit eng gefassten Berechtigungen/Quoten.
 
 ## Einen Gemini-Schlüssel erstellen
 
@@ -69,5 +97,5 @@ um die verfügbaren Modelle zu laden.
 
 ## Technik
 
-Vite · React · TypeScript · pdf.js · Web Speech API · IndexedDB. Keine
-Backend-Abhängigkeiten.
+Vite · React · TypeScript · pdf.js · Web Speech API · Netlify Functions ·
+Netlify Blobs (mit IndexedDB/localStorage als lokalem Fallback).

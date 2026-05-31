@@ -22,7 +22,7 @@ export function Reader({
   settings,
   update,
   speech,
-  onUpdateBook,
+  onPersist,
   onExit,
   onOpenSettings,
   onRegliedern,
@@ -33,7 +33,7 @@ export function Reader({
   settings: Settings;
   update: (patch: Partial<Settings>) => void;
   speech: Speech;
-  onUpdateBook: (book: Book) => void;
+  onPersist: (patch: { progress?: Record<string, number>; lastChapterId?: string }) => void;
   onExit: () => void;
   onOpenSettings: () => void;
   onRegliedern: () => void;
@@ -54,12 +54,12 @@ export function Reader({
   const goChapter = (i: number) => {
     const clamped = Math.min(Math.max(0, i), book.chapters.length - 1);
     setChapterIndex(clamped);
-    onUpdateBook({ ...book, lastChapterId: book.chapters[clamped].id });
+    onPersist({ lastChapterId: book.chapters[clamped].id });
   };
 
   const saveProgress = (wordIndex: number) => {
     const progress = { ...(book.progress || {}), [chapter.id]: wordIndex };
-    onUpdateBook({ ...book, progress, lastChapterId: chapter.id });
+    onPersist({ progress, lastChapterId: chapter.id });
   };
 
   const startIndex = book.progress?.[chapter.id] ?? 0;

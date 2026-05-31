@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from 'react';
-import type { Book } from './lib/types';
+import type { Book, BookMeta } from './lib/types';
 import { useSettings } from './hooks/useSettings';
 import { useSpeech } from './hooks/useSpeech';
 import {
@@ -7,15 +7,14 @@ import {
   getBook,
   saveBook,
   deleteBook as dbDeleteBook,
+  updateProgress,
   saveLastBookId,
+  storageMode,
+  type StorageMode,
 } from './lib/storage';
 import { extractPdf } from './lib/pdf';
 import { detectChapters } from './lib/gemini';
-import {
-  chaptersFromAiMarkers,
-  heuristicChapters,
-  makeId,
-} from './lib/chapters';
+import { chaptersFromAiMarkers, heuristicChapters, makeId } from './lib/chapters';
 import { countWords } from './lib/tokenize';
 import { Library } from './components/Library';
 import { Reader } from './components/Reader';
@@ -39,14 +38,14 @@ export default function App() {
   const { settings, update } = useSettings();
   const speech = useSpeech();
 
-  const [books, setBooks] = useState<Book[]>([]);
+  const [books, setBooks] = useState<BookMeta[]>([]);
   const [current, setCurrent] = useState<Book | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [importing, setImporting] = useState<ImportState>(IDLE_IMPORT);
   const [regliederBusy, setRegliederBusy] = useState(false);
+  const [mode, setMode] = useState<StorageMode>('unbekannt');
 
-  // Theme auf <body> spiegeln
   useLayoutEffect(() => {
     document.body.dataset.theme = settings.theme;
   }, [settings.theme]);
@@ -59,7 +58,9 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      setBooks(await getAllBooks());
+      const list = await getAllBooks();
+      setBooks(list);
+      setMode(storageMode());
     } catch (e) {
       console.error(e);
     }
@@ -113,15 +114,11 @@ export default function App() {
               progress: null,
               ai: true,
             });
-            const markers = await detectChapters(
-              settings.apiKey.trim(),
-              settings.model,
-              text,
-              (p) =>
-                setImporting((s) => ({
-                  ...s,
-                  detail: p.total > 1 ? `Abschnitt ${p.step} von ${p.total}` : 'Analysiere …',
-                })),
+            const markers = await detectChapters(settings.apiKey.trim(), settings.model, text, (p) =>
+              setImporting((s) => ({
+                ...s,
+                detail: p.total > 1 ? `Abschnitt ${p.step} von ${p.total}` : 'Analysiere …',
+              })),
             );
             chapters = chaptersFromAiMarkers(text, markers);
             chapterSource = 'ki';
@@ -153,7 +150,9 @@ export default function App() {
           progress: {},
         };
 
+        setImporting({ active: true, title: bookTitle, stage: 'Wird gespeichert …', progress: null });
         await saveBook(book);
+        setMode(storageMode());
         await refresh();
         setImporting(IDLE_IMPORT);
         notify(`„${bookTitle}“ importiert · ${chapters.length} Kapitel.`, 'success');
@@ -171,7 +170,6 @@ export default function App() {
   const handleFiles = useCallback(
     async (files: File[]) => {
       for (const f of files) {
-        // sequentiell, damit Fortschritt sauber angezeigt wird
         // eslint-disable-next-line no-await-in-loop
         await importOne(f);
       }
@@ -180,23 +178,57 @@ export default function App() {
   );
 
   // ---- Buch öffnen / löschen / aktualisieren ----
-  const openBook = useCallback(async (id: string) => {
-    const b = await getBook(id);
-    if (b) {
-      setCurrent(b);
-      saveLastBookId(id);
-    }
-  }, []);
+  const openBook = useCallback(
+    async (id: string) => {
+      try {
+        const b = await getBook(id);
+        if (b) {
+          setCurrent(b);
+          saveLastBookId(id);
+        } else {
+          notify('Buch konnte nicht geladen werden.', 'error');
+        }
+      } catch (e) {
+        notify('Buch konnte nicht geladen werden: ' + (e instanceof Error ? e.message : ''), 'error');
+      }
+    },
+    [notify],
+  );
 
-  const updateBook = useCallback((book: Book) => {
+  // Vollständiges Speichern (z. B. nach Neugliederung)
+  const saveFullBook = useCallback((book: Book) => {
     setCurrent((cur) => (cur && cur.id === book.id ? book : cur));
-    setBooks((list) => list.map((b) => (b.id === book.id ? book : b)));
+    setBooks((list) =>
+      list.map((m) =>
+        m.id === book.id
+          ? { ...m, chapterCount: book.chapters.length, chapterSource: book.chapterSource, lastChapterId: book.lastChapterId }
+          : m,
+      ),
+    );
     void saveBook(book);
   }, []);
 
+  // Leichtgewichtiges Speichern von Fortschritt / letztem Kapitel
+  const persistProgress = useCallback(
+    (id: string, patch: { progress?: Record<string, number>; lastChapterId?: string }) => {
+      setCurrent((cur) =>
+        cur && cur.id === id
+          ? {
+              ...cur,
+              ...(patch.progress !== undefined ? { progress: patch.progress } : {}),
+              ...(patch.lastChapterId !== undefined ? { lastChapterId: patch.lastChapterId } : {}),
+            }
+          : cur,
+      );
+      setBooks((list) => list.map((m) => (m.id === id ? { ...m, ...patch } : m)));
+      void updateProgress(id, patch);
+    },
+    [],
+  );
+
   const removeBook = useCallback(
-    async (book: Book) => {
-      if (!window.confirm(`„${book.title}“ wirklich aus der Bibliothek löschen?`)) return;
+    async (book: BookMeta) => {
+      if (!window.confirm(`„${book.title}“ wirklich löschen?`)) return;
       await dbDeleteBook(book.id);
       if (current?.id === book.id) {
         setCurrent(null);
@@ -225,14 +257,14 @@ export default function App() {
         progress: {},
         lastChapterId: chapters[0]?.id,
       };
-      updateBook(updated);
+      saveFullBook(updated);
       notify(`Neu gegliedert · ${chapters.length} Kapitel.`, 'success');
     } catch (e) {
       notify('Gliederung fehlgeschlagen: ' + (e instanceof Error ? e.message : 'Fehler'), 'error');
     } finally {
       setRegliederBusy(false);
     }
-  }, [current, settings.apiKey, settings.model, notify, updateBook]);
+  }, [current, settings.apiKey, settings.model, notify, saveFullBook]);
 
   const hasKey = settings.apiKey.trim().length > 0;
 
@@ -244,7 +276,7 @@ export default function App() {
           settings={settings}
           update={update}
           speech={speech}
-          onUpdateBook={updateBook}
+          onPersist={(patch) => persistProgress(current.id, patch)}
           onExit={() => {
             setCurrent(null);
             saveLastBookId(null);
@@ -265,6 +297,18 @@ export default function App() {
               </span>
             </button>
             <span className="spacer" />
+            <span
+              className="chip"
+              title={
+                mode === 'cloud'
+                  ? 'Deine Bücher liegen auf Netlify Blobs (geräteübergreifend).'
+                  : mode === 'lokal'
+                    ? 'Functions nicht erreichbar – Speicherung lokal in diesem Browser.'
+                    : ''
+              }
+            >
+              {mode === 'cloud' ? '☁︎ Netlify' : mode === 'lokal' ? '⌂ Lokal' : '…'}
+            </span>
             <span className={`chip ${hasKey ? 'ok' : 'warn'}`}>
               <IconSparkles width={14} height={14} />
               {hasKey ? 'KI bereit' : 'Kein Schlüssel'}

@@ -1,4 +1,4 @@
-import type { Book } from '../lib/types';
+import type { BookMeta } from '../lib/types';
 import { Uploader } from './Uploader';
 import { IconTrash, IconList, IconText, IconSparkles } from './Icons';
 
@@ -20,10 +20,10 @@ export function Library({
   onDelete,
   onFiles,
 }: {
-  books: Book[];
+  books: BookMeta[];
   hasKey: boolean;
   onOpen: (id: string) => void;
-  onDelete: (book: Book) => void;
+  onDelete: (book: BookMeta) => void;
   onFiles: (files: File[]) => void;
 }) {
   return (
@@ -79,7 +79,7 @@ export function Library({
                 {b.author && <div className="ba">{b.author}</div>}
                 <div className="bstats">
                   <span>
-                    <IconList width={13} height={13} /> {b.chapters.length} Kap.
+                    <IconList width={13} height={13} /> {b.chapterCount} Kap.
                   </span>
                   <span>
                     <IconText width={13} height={13} /> {fmtNumber(b.wordCount)} Wörter
