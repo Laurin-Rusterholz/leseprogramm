@@ -41,6 +41,12 @@ check('countWords', countWords('eins zwei   drei\nvier') === 4);
 const longTok = tokenize('x'.repeat(50));
 check('langes wort gesplittet', longTok.length >= 2, longTok.length);
 
+// Satzanfang wird länger gezeigt (sanftes Eingewöhnen)
+const stoks = tokenize('Hallo Welt. Dies ist ein Test.');
+check('satzanfang langsamer (erstes wort)', stoks[0].delay >= 1.5, stoks[0]);
+check('satzanfang langsamer (nach satzende)', stoks[2].delay >= 1.5, { tok: stoks[2] }); // "Dies"
+check('satzmitte normal', stoks[3].delay === 1, stoks[3]); // "ist"
+
 // ----- Sätze -----
 const text = 'Erster Satz. Zweiter Satz!\n\nNeuer Absatz hier. Und noch einer?';
 const sents = splitSentences(text);
@@ -58,13 +64,13 @@ const s2 = model.sentences[2];
 check('tokenAtChar start', tokenAtChar(model, 2, 0) === s2.first, { got: tokenAtChar(model, 2, 0), first: s2.first });
 
 // ----- KI-Marker -> Kapitel (Kapitel mit echtem, ausreichend langem Inhalt) -----
-const vorwortBody = 'Dies sind einige einleitende Worte zum Buch und seinem Anliegen. '.repeat(8);
-const dorfBody = 'Es war einmal ein kleines Dorf am Fluss, in dem zufriedene Menschen lebten. '.repeat(8);
-const rueckBody = 'Viele Jahre später kehrte sie in das Dorf ihrer Kindheit zurück. '.repeat(8);
+// Fülltext, damit Kapitel groß genug sind (kein Verschmelzen). Die Marker-Sätze
+// selbst kommen je nur einmal vor – wie in echten Büchern.
+const filler = 'Weitere Gedanken folgen hier, damit der Abschnitt genug Inhalt für einen vollständigen Absatz besitzt. '.repeat(5);
 const book =
-  'Vorwort\n' + vorwortBody + '\n\n' +
-  'Kapitel 1\n' + dorfBody + '\n\n' +
-  'Kapitel 2\n' + rueckBody;
+  'Vorwort\nDies sind einige einleitende Worte zum Buch. ' + filler + '\n\n' +
+  'Kapitel 1\nEs war einmal ein kleines Dorf am Fluss. ' + filler + '\n\n' +
+  'Kapitel 2\nViele Jahre später kehrte sie zurück. ' + filler;
 const markers = [
   { title: 'Vorwort', start_marker: 'Dies sind einige einleitende Worte' },
   { title: 'Das Dorf', start_marker: 'Es war einmal ein kleines Dorf am Fluss' },
@@ -103,7 +109,8 @@ const tocBook =
   'NACHWORT\n' +
   'DANKSAGUNG\n' +
   '\n' +
-  'Dieses Buch ist allen gewidmet, die den Mut haben, sich selbst ehrlich zu begegnen und Muster zu durchbrechen.\n\n' +
+  'Dieses Buch ist allen gewidmet, die den Mut haben, sich selbst ehrlich zu begegnen und alte Muster zu durchbrechen. ' +
+  'Es ist eine Einladung, den eigenen Weg mit Geduld und Mitgefühl zu gehen.\n\n' +
   'EINFÜHRUNG\n' + tBody1 + '\n\n' +
   '1 DAS HINDERNIS BIST DU SELBST\n' + tBody2 + '\n\n' +
   '2 DER WEG NACH VORN\n' + tBody3;

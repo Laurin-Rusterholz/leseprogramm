@@ -71,42 +71,50 @@ function looksLikeTocLine(line: string): boolean {
 }
 
 /**
- * Erkennt am Buchanfang ein Inhaltsverzeichnis (viele kurze Überschriften ohne
- * Fließtext dazwischen) und liefert den **Original-Offset**, ab dem die echten
- * Kapitel beginnen. Der Offset zeigt auf den Anfang der letzten Überschrift vor
- * dem ersten Fließtext – so wird die erste echte Kapitelüberschrift nie
- * versehentlich übersprungen. 0 = kein TOC erkannt.
+ * Erkennt am Buchanfang ein Inhaltsverzeichnis (viele Überschriften/Großbuchstaben-
+ * Zeilen, kaum Fließtext) und liefert den **Original-Offset**, ab dem die echten
+ * Kapitel beginnen (Anfang der letzten TOC-Zeile vor dem ersten Fließtext, damit
+ * die erste echte Kapitelüberschrift erhalten bleibt). 0 = kein TOC erkannt.
  */
 export function detectTocEnd(text: string): number {
-  const horizon = Math.min(text.length, 25000);
+  const horizon = Math.min(text.length, 30000);
   const lines = text.slice(0, horizon).split('\n');
   let pos = 0;
-  let headingsRun = 0;
-  let lastHeadingStart = -1;
-  let tocEnd = -1;
+  let tocRun = 0;
+  let sawToc = false;
+  let lastTocStart = -1;
+  let bodyChars = 0;
+  let bodyStart = -1;
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    const lineStart = pos;
+    const t = line.trim();
+    const start = pos;
     pos += line.length + 1; // +1 für das entfernte "\n"
-    if (trimmed === '') continue;
+    if (t === '') continue;
 
-    if (looksLikeTocLine(trimmed)) {
-      headingsRun++;
-      lastHeadingStart = lineStart;
-      continue;
-    }
-    // Fließtext (lange Zeile oder Zeile mit Satzendzeichen) -> TOC zu Ende
-    const isFlowingText = trimmed.length > 70 || /[.!?]/.test(trimmed);
-    if (isFlowingText) {
-      if (headingsRun >= 5) {
-        tocEnd = lastHeadingStart;
-        break;
-      }
-      headingsRun = 0;
+    const endsSentence = /[.!?]["'»“”)\]]?$/.test(t);
+    // Echter Fließtext: enthält Kleinbuchstaben, ist nicht durchgehend groß
+    // geschrieben und ist entweder länger oder satzartig.
+    const bodyish = /[a-zà-ÿ]/.test(t) && !isMostlyCaps(t) && (t.length > 45 || endsSentence);
+
+    if (bodyish) {
+      if (bodyStart === -1) bodyStart = start;
+      bodyChars += t.length;
+      // Nach einem TOC-Block reicht etwas zusammenhängender Fließtext, um das
+      // Inhaltsverzeichnis als beendet zu betrachten.
+      if (sawToc && bodyChars >= 120) return lastTocStart > 0 ? lastTocStart : bodyStart;
+    } else if (looksLikeTocLine(t) || isMostlyCaps(t)) {
+      tocRun++;
+      lastTocStart = start;
+      if (tocRun >= 4) sawToc = true;
+      bodyChars = 0;
+      bodyStart = -1;
+    } else {
+      bodyChars = 0;
+      bodyStart = -1;
     }
   }
-  return tocEnd > 0 ? tocEnd : 0;
+  return 0;
 }
 
 /**
@@ -222,6 +230,7 @@ export function buildChaptersFromPoints(text: string, points: ChapterPoint[]): C
 }
 
 /** Übersetzt einen Original-Offset in den nächstgelegenen normalisierten Index. */
+/** Übersetzt einen Original-Offset in den nächstgelegenen normalisierten Index. */
 function origToNorm(info: NormalizedText, origOffset: number): number {
   if (origOffset <= 0) return 0;
   for (let i = 0; i < info.map.length; i++) {
@@ -230,7 +239,12 @@ function origToNorm(info: NormalizedText, origOffset: number): number {
   return info.map.length;
 }
 
-/** Erzeugt Kapitel aus KI-Markern (überspringt ein Inhaltsverzeichnis). */
+/**
+ * Erzeugt Kapitel aus KI-Markern. Ein erkanntes Inhaltsverzeichnis am
+ * Buchanfang wird übersprungen, danach wird vorwärts gesucht: das erste
+ * Vorkommen nach dem Lesefortschritt ist die echte Kapitelüberschrift (nicht
+ * der TOC-Eintrag und nicht eine spätere Erwähnung im Fließtext).
+ */
 export function chaptersFromAiMarkers(text: string, markers: AiChapterMarker[]): Chapter[] {
   const info = normalize(text);
   const tocEndNorm = origToNorm(info, detectTocEnd(text));
@@ -293,7 +307,12 @@ export function heuristicChapters(text: string): Chapter[] {
     }
   }
 
-  if (points.length < 2) {
+  // Unrealistisch viele „Überschriften" (z. B. ein großgeschriebenes
+  // Inhaltsverzeichnis, das nicht als TOC erkannt wurde) -> lieber in
+  // gleichmäßige Abschnitte teilen, statt das Buch zu zerstückeln.
+  const words = (text.match(/\S+/g) || []).length;
+  const overSegmented = words > 2000 && points.length >= 2 && words / points.length < 400;
+  if (points.length < 2 || overSegmented) {
     return splitIntoSections(text);
   }
   return buildChaptersFromPoints(text, points);

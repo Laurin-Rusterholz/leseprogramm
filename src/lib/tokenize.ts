@@ -36,6 +36,9 @@ export function tokenize(text: string, longWordPause = true): Token[] {
   // Wörter inkl. anhängender Satzzeichen über Whitespace trennen.
   const regex = /\S+/g;
   let match: RegExpExecArray | null;
+  // Das erste Wort sowie jedes Wort direkt nach einem Satzende gilt als
+  // Satzanfang und wird etwas länger gezeigt (sanftes „Eingewöhnen").
+  let atSentenceStart = true;
   while ((match = regex.exec(text)) !== null) {
     const raw = match[0];
     const offset = match.index;
@@ -46,6 +49,7 @@ export function tokenize(text: string, longWordPause = true): Token[] {
         const part = raw.slice(i, i + 22);
         tokens.push({ text: part, orp: orpIndex(part), delay: 1, offset: offset + i });
       }
+      atSentenceStart = SENTENCE_END.test(raw);
       continue;
     }
 
@@ -53,8 +57,11 @@ export function tokenize(text: string, longWordPause = true): Token[] {
     if (SENTENCE_END.test(raw)) delay = 2.2;
     else if (CLAUSE_END.test(raw)) delay = 1.6;
     if (longWordPause && raw.length >= 9) delay = Math.max(delay, 1.4);
+    // Satzanfang: kurz langsamer, um sich zu orientieren.
+    if (atSentenceStart) delay = Math.max(delay, 1.5);
 
     tokens.push({ text: raw, orp: orpIndex(raw), delay, offset });
+    atSentenceStart = SENTENCE_END.test(raw);
   }
   return tokens;
 }
