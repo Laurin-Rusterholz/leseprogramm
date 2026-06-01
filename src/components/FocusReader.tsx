@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Chapter, Settings } from '../lib/types';
-import { buildReadingModel, tokenAtChar } from '../lib/reading';
+import { buildReadingModel } from '../lib/reading';
 import { estimateSeconds, formatDuration } from '../lib/tokenize';
 import { useFullscreen } from '../hooks/useFullscreen';
 import type { useSpeech } from '../hooks/useSpeech';
@@ -69,8 +69,7 @@ export function FocusReader({
   const wpmRef = useRef(settings.wpm);
   const voiceOnRef = useRef(voiceOn);
   const wordTimer = useRef<number | null>(null);
-  const interpTimer = useRef<number | null>(null);
-  const curSentenceRef = useRef(0);
+  const spokenSentenceRef = useRef(-1);
   const immerseTimer = useRef<number | null>(null);
 
   wpmRef.current = settings.wpm;
@@ -90,24 +89,45 @@ export function FocusReader({
       wordTimer.current = null;
     }
   };
-  const clearInterp = () => {
-    if (interpTimer.current !== null) {
-      clearInterval(interpTimer.current);
-      interpTimer.current = null;
-    }
-  };
 
   const finish = useCallback(() => {
     playingRef.current = false;
     clearWordTimer();
-    clearInterp();
     speech.cancel();
     setIndex(totalRef.current - 1);
     setStatus('done');
     onProgress(totalRef.current - 1);
   }, [speech, setIndex, onProgress]);
 
-  // ---- reine WPM-Steuerung (ohne Stimme) ----
+  // Sprechgeschwindigkeit aus der WpM ableiten, damit die Stimme so schnell
+  // liest, wie die Wörter angezeigt werden (rate 1 ≈ ~165 WpM bei den meisten Stimmen).
+  const rateForWpm = (wpm: number) => Math.min(4, Math.max(0.5, wpm / 165));
+
+  // Liest ab Token i bis zum Satzende vor (bei Satzwechsel bzw. beim Fortsetzen).
+  const speakFromToken = useCallback(
+    (i: number) => {
+      if (!voiceOnRef.current || !speech.supported) return;
+      const sentenceIdx = model.tokenToSentence[i] ?? 0;
+      spokenSentenceRef.current = sentenceIdx;
+      const s = model.sentences[sentenceIdx];
+      const startTok = model.tokens[i];
+      const lastTok = s ? model.tokens[s.last] : undefined;
+      if (!s || !startTok || !lastTok) return;
+      const segment = chapter.text.slice(startTok.offset, lastTok.offset + lastTok.text.length).trim();
+      if (!segment) return;
+      speech.speak([segment], {
+        voiceURI: settings.voiceURI || undefined,
+        rate: rateForWpm(wpmRef.current),
+        pitch: settings.ttsPitch,
+        lang: 'de-DE',
+      });
+    },
+    [model, speech, settings.voiceURI, settings.ttsPitch, chapter.text],
+  );
+
+  // Der WpM-Takt steuert die Anzeige (in beiden Modi). Bei aktivierter Stimme
+  // wird beim Eintritt in einen neuen Satz dieser Satz vorgelesen – mit einer
+  // Rate, die zur WpM passt, sodass Stimme und Anzeige gleich schnell laufen.
   const scheduleWpm = useCallback(() => {
     clearWordTimer();
     const i = indexRef.current;
@@ -118,71 +138,21 @@ export function FocusReader({
       return;
     }
     wordTimer.current = window.setTimeout(() => {
-      setIndex(indexRef.current + 1);
-      if (playingRef.current && !voiceOnRef.current) scheduleWpm();
-    }, delay);
-  }, [tokens, total, setIndex, finish]);
-
-  // ---- Sprachgesteuerte Wiedergabe ----
-  const startInterpolation = useCallback(
-    (sentenceIdx: number) => {
-      clearInterp();
-      const s = model.sentences[sentenceIdx];
-      if (!s) return;
-      const last = s.last;
-      const interval = Math.max(120, 60000 / wpmRef.current);
-      interpTimer.current = window.setInterval(() => {
-        const i = indexRef.current;
-        if (i < last) setIndex(i + 1);
-      }, interval);
-    },
-    [model, setIndex],
-  );
-
-  const startVoice = useCallback(
-    (fromIndex: number) => {
-      const startSentence = model.tokenToSentence[fromIndex] ?? 0;
-      curSentenceRef.current = startSentence;
-      const segments = model.sentences.slice(startSentence).map((s) => s.text);
-      if (segments.length === 0) {
-        finish();
-        return;
+      const next = indexRef.current + 1;
+      setIndex(next);
+      if (voiceOnRef.current && model.tokenToSentence[next] !== spokenSentenceRef.current) {
+        speakFromToken(next);
       }
-      speech.speak(segments, {
-        voiceURI: settings.voiceURI || undefined,
-        rate: settings.ttsRate,
-        pitch: settings.ttsPitch,
-        lang: 'de-DE',
-        onSegmentStart: (rel) => {
-          const si = startSentence + rel;
-          curSentenceRef.current = si;
-          setIndex(model.sentences[si].first);
-          startInterpolation(si);
-        },
-        onBoundary: (rel, charIndex) => {
-          const si = startSentence + rel;
-          const tok = tokenAtChar(model, si, charIndex);
-          if (tok > indexRef.current) setIndex(tok);
-        },
-        onSegmentEnd: () => {
-          clearInterp();
-        },
-        onDone: (finished) => {
-          clearInterp();
-          if (finished) finish();
-        },
-      });
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [model, settings.voiceURI, settings.ttsRate, settings.ttsPitch, speech, startInterpolation, setIndex],
-  );
+      if (playingRef.current) scheduleWpm();
+    }, delay);
+  }, [tokens, total, setIndex, finish, model, speakFromToken]);
 
   const beginPlay = useCallback(() => {
     playingRef.current = true;
     setStatus('playing');
-    if (voiceOnRef.current && speech.supported) startVoice(indexRef.current);
-    else scheduleWpm();
-  }, [scheduleWpm, startVoice, speech.supported]);
+    if (voiceOnRef.current && speech.supported) speakFromToken(indexRef.current);
+    scheduleWpm();
+  }, [scheduleWpm, speakFromToken, speech.supported]);
 
   const play = useCallback(() => {
     if (status === 'done' || indexRef.current >= total - 1) {
@@ -203,21 +173,16 @@ export function FocusReader({
     playingRef.current = false;
     setStatus('paused');
     clearWordTimer();
-    clearInterp();
-    if (voiceOnRef.current) speech.pause();
+    if (voiceOnRef.current) speech.cancel();
     onProgress(indexRef.current);
   }, [speech, onProgress]);
 
   const resume = useCallback(() => {
     playingRef.current = true;
     setStatus('playing');
-    if (voiceOnRef.current) {
-      speech.resume();
-      startInterpolation(curSentenceRef.current);
-    } else {
-      scheduleWpm();
-    }
-  }, [speech, scheduleWpm, startInterpolation]);
+    if (voiceOnRef.current && speech.supported) speakFromToken(indexRef.current);
+    scheduleWpm();
+  }, [speech.supported, scheduleWpm, speakFromToken]);
 
   const togglePlay = useCallback(() => {
     if (status === 'playing') pause();
@@ -229,14 +194,15 @@ export function FocusReader({
     (delta: number) => {
       setIndex(indexRef.current + delta);
       onProgress(indexRef.current);
+      // Bei laufender Wiedergabe mit Stimme die Audio-Position mitziehen
+      if (playingRef.current && voiceOnRef.current) speakFromToken(indexRef.current);
     },
-    [setIndex, onProgress],
+    [setIndex, onProgress, speakFromToken],
   );
 
   const handleExit = useCallback(() => {
     playingRef.current = false;
     clearWordTimer();
-    clearInterp();
     speech.cancel();
     onProgress(indexRef.current);
     fs.exit();
@@ -314,7 +280,6 @@ export function FocusReader({
   useEffect(() => {
     return () => {
       clearWordTimer();
-      clearInterp();
       speech.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -332,8 +297,8 @@ export function FocusReader({
       pause();
     }
     speech.cancel();
-    clearInterp();
     clearWordTimer();
+    spokenSentenceRef.current = -1;
     setVoiceOn(next);
     voiceOnRef.current = next;
   };
